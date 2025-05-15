@@ -6,9 +6,10 @@ local Pile      = require "Pile"
 local layout    = require "layout"
 local game      = require "game"
 
--- Globals for assets and state
+-- Globals for assets, sounds, and state
 local images, CARD_BACK, CARD_W, CARD_H
 local state, dragging, hudFont, btnNewGame
+local sounds = {}
 
 -- Game rule checks
 local function canPlaceOnTableau(c, d)
@@ -40,7 +41,6 @@ end
 
 -- Helpers for mouse interaction
 local function isOverHeader(p, x, y)
-  -- p may be pile or button
   if p.w and p.h then
     return x >= p.x and x <= p.x + p.w and y >= p.y and y <= p.y + p.h
   else
@@ -98,20 +98,30 @@ function love.load()
   _G.CARD_W, _G.CARD_H = CARD_W, CARD_H
   _G.CARD_BACK = CARD_BACK
 
+  -- Load sound effects
+  sounds.card_flip = love.audio.newSource("assets/sounds/card_flip.mp3", "static")
+  sounds.shuffle   = love.audio.newSource("assets/sounds/shuffle.mp3",   "static")
+  sounds.win       = love.audio.newSource("assets/sounds/win.mp3",       "static")
+
   hudFont = love.graphics.newFont(constants.HUD_FONT_SIZE)
   btnNewGame = { x = constants.SCREEN_W - 150, y = 20, w = 140, h = 44 }
 
+  -- Start new game and play shuffle sound
   state = game.newGame(images, CARD_W, CARD_H)
+  love.audio.play(sounds.shuffle)
 end
 
 function love.mousepressed(x, y, button)
   if button ~= 1 then return end
 
+  -- New Game button
   if isOverHeader(btnNewGame, x, y) then
     state = game.newGame(images, CARD_W, CARD_H)
+    love.audio.play(sounds.shuffle)
     return
   end
 
+  -- Stock / Deal 3 logic
   if isOverHeader(state.stock, x, y) then
     if state.stock:isEmpty() then
       for i = #state.waste.cards, 1, -1 do
@@ -131,6 +141,8 @@ function love.mousepressed(x, y, button)
       for i = 1, math.min(3, #state.stock.cards) do
         local c = table.remove(state.stock.cards)
         c.faceUp = true; state.waste:add(c)
+        -- Play flip sound for each card turned
+        love.audio.play(sounds.card_flip)
       end
       layout.layoutWaste(state.waste)
     end
@@ -138,6 +150,7 @@ function love.mousepressed(x, y, button)
     return
   end
 
+  -- Pick up cards
   local c = findCard(x, y)
   if not c or not c.faceUp or c.pile.kind == "foundation" then return end
   if c.pile.kind == "waste" and c ~= c.pile:top() then return end
@@ -181,7 +194,17 @@ function love.mousereleased(x, y)
   local placed = false
   for _, p in ipairs(state.piles) do
     if isOverPile(p, x, y) and tryPlace(dragging.cards, p) then
-      placed = true; state.moveCount = state.moveCount + 1; break
+      placed = true
+      state.moveCount = state.moveCount + 1
+      -- Play flip sound when placing
+      love.audio.play(sounds.card_flip)
+      -- Check for win and play win sound
+      local won = true
+      for _, f in ipairs(state.foundations) do
+        if #f.cards < 13 then won = false; break end
+      end
+      if won then love.audio.play(sounds.win) end
+      break
     end
   end
   if not placed then
@@ -194,9 +217,13 @@ function love.mousereleased(x, y)
       layout.layoutWaste(dragging.origin)
     end
   end
+  -- Flip next card in tableau if needed
   if dragging.origin.kind == "tableau" and not dragging.origin:isEmpty() then
     local t = dragging.origin:top()
-    if not t.faceUp then t.faceUp = true end
+    if not t.faceUp then
+      t.faceUp = true
+      love.audio.play(sounds.card_flip)
+    end
   end
   dragging = nil
 end
@@ -213,11 +240,13 @@ function love.draw()
   love.graphics.setColor(1,1,1)
   love.graphics.print(text, (constants.SCREEN_W - hudFont:getWidth(text))/2, 25)
 
+  -- New Game button
   love.graphics.setColor(0.2,0.2,0.2,0.8)
   love.graphics.rectangle("fill", btnNewGame.x, btnNewGame.y, btnNewGame.w, btnNewGame.h, 6,6)
   love.graphics.setColor(1,1,1)
   love.graphics.printf("New Game", btnNewGame.x, btnNewGame.y+10, btnNewGame.w, "center")
 
+  -- Win message
   local won = true
   for _, f in ipairs(state.foundations) do if #f.cards < 13 then won = false; break end end
   if won then
